@@ -12,7 +12,7 @@ class SoundPlayer : public QObject {
     Q_OBJECT
 public:
     explicit SoundPlayer(QObject *parent = nullptr);
-    void synchronize(GameState state, bool enabled, const GameSkin &skin);
+    void synchronize(GameState state, const GameSettings &settings, const GameSkin &skin);
     void playHit();
 
 private:

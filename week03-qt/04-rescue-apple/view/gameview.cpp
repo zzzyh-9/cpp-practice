@@ -4,29 +4,31 @@
 #include <QGraphicsScene>
 #include <QKeyEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QResizeEvent>
 #include <QSet>
 
 namespace RescueApple {
 
-static QRectF basketRect(const QRectF &field)
+QRectF GameView::basketRect() const
 {
-    const qreal width = qBound(130.0, field.width() * 0.17, 280.0);
+    const QSize field = viewport()->size();
+    const qreal width = qBound(120.0, qMin(field.width() * 0.19, field.height() * 0.34), 280.0);
     const qreal height = width * 656.0 / 746.0;
-    return QRectF((field.width() - width) / 2.0, field.height() * 0.89 - height, width, height);
+    return QRectF(field.width() - width - 8, field.height() - height - 3, width, height);
 }
 
 class FallingItem : public QGraphicsItem {
 public:
     explicit FallingItem(SkinManager *skins) : m_skins(skins) {}
     QRectF boundingRect() const override { return QRectF(-m_size / 2, -m_size / 2, m_size, m_size); }
-    void setToken(const FallingToken &token, qreal size, const QSizeF &field)
+    void setToken(const FallingToken &token, qreal size, const QSizeF &field, bool hideLetter)
     {
         if (!qFuzzyCompare(size, m_size)) {
             prepareGeometryChange();
             m_size = size;
         }
-        m_symbol = token.symbol;
+        m_symbol = hideLetter ? QLatin1Char('?') : token.symbol;
         setPos(token.x * field.width(), token.y * field.height());
         update();
     }
@@ -78,6 +80,11 @@ void GameView::setupScene()
 
 void GameView::display(const FallingGameModel &model)
 {
+    const bool hasRescuedApple = model.stats().success > 0;
+    if (m_hasRescuedApple != hasRescuedApple) {
+        m_hasRescuedApple = hasRescuedApple;
+        viewport()->update(basketRect().toAlignedRect());
+    }
     QSet<quint64> active;
     for (const auto &token : model.tokens()) {
         active.insert(token.id);
@@ -87,7 +94,7 @@ void GameView::display(const FallingGameModel &model)
             m_items.insert(token.id, item);
             m_scene->addItem(item);
         }
-        item->setToken(token, model.tokenDiameter(), m_scene->sceneRect().size());
+        item->setToken(token, model.tokenDiameter(), m_scene->sceneRect().size(), model.state() == GameState::Paused);
     }
     for (auto iterator = m_items.begin(); iterator != m_items.end();) {
         if (!active.contains(iterator.key())) {
@@ -178,24 +185,49 @@ void GameView::drawBackground(QPainter *painter, const QRectF &)
     }
     const QPixmap basket = m_skins->frame(QStringLiteral("apple_basket_back"));
     if (!basket.isNull())
-        painter->drawPixmap(basketRect(field), basket, basket.rect());
+        painter->drawPixmap(basketRect(), basket, basket.rect());
     painter->restore();
 }
 
 void GameView::drawForeground(QPainter *painter, const QRectF &)
 {
     painter->save();
+    const QRectF area = basketRect();
     const QPixmap basket = m_skins->frame(QStringLiteral("apple_basket_front"));
-    if (!basket.isNull())
-        painter->drawPixmap(basketRect(sceneRect()), basket, basket.rect());
-    const qreal line = sceneRect().height() * FallingGameModel::failureLine();
-    painter->setPen(QPen(QColor(113, 138, 111, 145), 1, Qt::DashLine));
-    painter->drawLine(QPointF(0, line), QPointF(sceneRect().width(), line));
-    QFont font(QStringLiteral("Microsoft YaHei"));
-    font.setPixelSize(12);
-    painter->setFont(font);
-    painter->setPen(QColor(QStringLiteral("#58735b")));
-    painter->drawText(QRectF(18, line + 8, 260, 20), QStringLiteral("落到此线记为漏接 · 70%"));
+    const QRectF rim(area.left() + area.width() * 0.10, area.top() + area.height() * 0.57,
+                     area.width() * 0.80, area.height() * 0.22);
+    if (basket.isNull()) {
+        QPainterPath handle;
+        handle.moveTo(rim.left() + rim.width() * 0.10, rim.center().y());
+        handle.cubicTo(area.left() + area.width() * 0.24, area.top(),
+                       area.right() - area.width() * 0.24, area.top(),
+                       rim.right() - rim.width() * 0.10, rim.center().y());
+        painter->setPen(QPen(QColor(QStringLiteral("#a36333")), area.width() * 0.05,
+                             Qt::SolidLine, Qt::RoundCap));
+        painter->setBrush(Qt::NoBrush);
+        painter->drawPath(handle);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(QColor(QStringLiteral("#a36333")));
+        painter->drawEllipse(rim);
+    }
+    if (m_hasRescuedApple) {
+        const qreal size = area.width() * 0.27;
+        const QRectF apple(area.left() + area.width() * 0.56, rim.center().y() - size * 0.8, size, size);
+        const auto &image = m_skins->skin().apple;
+        painter->drawPixmap(apple, image, image.rect());
+    }
+    if (!basket.isNull()) {
+        painter->drawPixmap(area, basket, basket.rect());
+    } else {
+        QPainterPath body;
+        body.moveTo(rim.left(), rim.center().y());
+        body.quadTo(rim.center().x(), rim.bottom() + area.height() * 0.08, rim.right(), rim.center().y());
+        body.quadTo(rim.right() - rim.width() * 0.09, area.bottom() - 6, rim.center().x(), area.bottom() - 6);
+        body.quadTo(rim.left() + rim.width() * 0.09, area.bottom() - 6, rim.left(), rim.center().y());
+        painter->setPen(QPen(QColor(QStringLiteral("#a36333")), 2));
+        painter->setBrush(QColor(QStringLiteral("#d89955")));
+        painter->drawPath(body);
+    }
     painter->restore();
 }
 

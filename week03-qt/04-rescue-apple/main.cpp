@@ -26,6 +26,7 @@ int main(int argc, char *argv[])
     if (parser.isSet(QStringLiteral("mute"))) {
         auto settings = model.settings();
         settings.soundEnabled = false;
+        settings.musicEnabled = false;
         model.applySettings(settings);
     }
     const auto screens = QGuiApplication::screens();

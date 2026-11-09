@@ -34,9 +34,11 @@ signals:
     void soundToggled(bool enabled);
 
 protected:
+    void changeEvent(QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
 private:
+    void setupFullscreenTitleBar();
     void arrangeOverlays();
     void updateScreens();
     void moveToScreen(int index);
@@ -60,6 +62,7 @@ private:
     QLabel *m_overlayText;
     SpriteButton *m_primary;
     QFrame *m_footer;
+    QFrame *m_fullscreenTitleBar = nullptr;
     QCheckBox *m_sound;
     QComboBox *m_screens;
     GameState m_displayedState = GameState::Idle;

@@ -5,7 +5,6 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
-#include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QFrame>
 #include <QGuiApplication>
@@ -18,7 +17,7 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSlider>
-#include <QSpinBox>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWindow>
 
@@ -44,6 +43,7 @@ public:
         m_caption = caption;
         update();
     }
+    void setFallbackText(const QString &text) { m_fallback = text; }
 protected:
     void paintEvent(QPaintEvent *) override
     {
@@ -62,11 +62,12 @@ protected:
         }
         const QString caption = m_caption.isEmpty() && image.isNull() ? m_fallback : m_caption;
         if (!caption.isEmpty()) {
-            QFont font(QStringLiteral("Microsoft YaHei"));
-            font.setPixelSize(qBound(13, height() / 3, 22));
-            font.setBold(true);
-            painter.setFont(font);
-            painter.setPen(QColor(QStringLiteral("#fff9e9")));
+            QFont captionFont = font();
+            captionFont.setFamily(QStringLiteral("Microsoft YaHei"));
+            captionFont.setPixelSize(qMax(captionFont.pixelSize(), qBound(13, height() / 3, 22)));
+            captionFont.setBold(true);
+            painter.setFont(captionFont);
+            painter.setPen(QColor(image.isNull() ? QStringLiteral("#674321") : QStringLiteral("#fff9e9")));
             painter.drawText(rect(), Qt::AlignCenter, caption);
         }
     }
@@ -123,6 +124,8 @@ GameWindow::GameWindow(SkinManager *skins, QWidget *parent)
     m_levelPlate = new ImagePanel(skins, QStringLiteral("apple_level_bg"), surface);
     m_success = new QLabel(m_successPlate);
     m_failure = new QLabel(m_failurePlate);
+    m_success->setObjectName(QStringLiteral("rescuedCount"));
+    m_failure->setObjectName(QStringLiteral("missedCount"));
     m_level = new QLabel(m_levelPlate);
     for (auto *label : {m_success, m_failure, m_level}) {
         label->setAlignment(Qt::AlignCenter);
@@ -135,10 +138,11 @@ GameWindow::GameWindow(SkinManager *skins, QWidget *parent)
     m_status->setAlignment(Qt::AlignCenter);
     m_status->setStyleSheet(QStringLiteral("color:#573c22; background:rgba(255,249,222,220); border-radius:12px; padding:5px;"));
 
-    m_pause = new SpriteButton(skins, QStringLiteral("apple_pause"), QStringLiteral("暂停 / 继续（空格）"), surface);
+    m_pause = new SpriteButton(skins, QStringLiteral("apple_pause"), QStringLiteral("暂停"), surface);
+    m_pause->setToolTip(QStringLiteral("暂停 / 继续（空格）"));
     m_pause->setObjectName(QStringLiteral("pauseButton"));
-    m_stop = new SpriteButton(skins, QStringLiteral("apple_endgame"), QStringLiteral("结束本局"), surface);
-    m_settings = new SpriteButton(skins, QStringLiteral("apple_settings"), QStringLiteral("游戏设置"), surface);
+    m_stop = new SpriteButton(skins, QStringLiteral("apple_endgame"), QStringLiteral("结束"), surface);
+    m_settings = new SpriteButton(skins, QStringLiteral("apple_settings"), QStringLiteral("设置"), surface);
     connect(m_pause, &QAbstractButton::clicked, this, &GameWindow::pauseRequested);
     connect(m_stop, &QAbstractButton::clicked, this, &GameWindow::stopRequested);
     connect(m_settings, &QAbstractButton::clicked, this, &GameWindow::settingsRequested);
@@ -212,7 +216,43 @@ GameWindow::GameWindow(SkinManager *skins, QWidget *parent)
             showNormal();
     });
     connect(m_skins, &SkinManager::changed, this, [this]() { arrangeOverlays(); });
+    setupFullscreenTitleBar();
     arrangeOverlays();
+}
+
+void GameWindow::setupFullscreenTitleBar()
+{
+    m_fullscreenTitleBar = new QFrame(m_view->viewport());
+    m_fullscreenTitleBar->setObjectName(QStringLiteral("fullscreenTitleBar"));
+    m_fullscreenTitleBar->setStyleSheet(QStringLiteral(
+        "QFrame#fullscreenTitleBar {background:#f4f3f0; border-bottom:1px solid #d6d2c9;}"
+        "QLabel {color:#282828; font-size:14px;}"
+        "QPushButton {color:#282828; background:transparent; border:0; font-size:18px;}"
+        "QPushButton:hover {background:#e2e0dc;}"
+        "QPushButton#fullscreenClose:hover {background:#c42b1c; color:white;}"));
+    auto *layout = new QHBoxLayout(m_fullscreenTitleBar);
+    layout->setContentsMargins(14, 0, 0, 1);
+    layout->setSpacing(0);
+    auto *title = new QLabel(windowTitle(), m_fullscreenTitleBar);
+    connect(this, &QWidget::windowTitleChanged, title, &QLabel::setText);
+    layout->addWidget(title, 1);
+    const auto addButton = [this, layout](const QString &glyph, const QString &name, const char *id) {
+        auto *button = new QPushButton(glyph, m_fullscreenTitleBar);
+        button->setObjectName(QString::fromLatin1(id));
+        button->setAccessibleName(name);
+        button->setToolTip(name);
+        button->setFixedWidth(48);
+        button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+        button->setFocusPolicy(Qt::NoFocus);
+        layout->addWidget(button);
+        return button;
+    };
+    auto *minimize = addButton(QStringLiteral("−"), QStringLiteral("最小化游戏"), "fullscreenMinimize");
+    auto *restore = addButton(QStringLiteral("❐"), QStringLiteral("退出全屏"), "fullscreenRestore");
+    auto *close = addButton(QStringLiteral("×"), QStringLiteral("关闭游戏"), "fullscreenClose");
+    connect(minimize, &QPushButton::clicked, this, &QWidget::showMinimized);
+    connect(restore, &QPushButton::clicked, this, &GameWindow::toggleFullScreen);
+    connect(close, &QPushButton::clicked, this, &QWidget::close);
 }
 
 void GameWindow::arrangeOverlays()
@@ -221,29 +261,44 @@ void GameWindow::arrangeOverlays()
     const int height = m_view->viewport()->height();
     const qreal scale = qBound(0.65, qMin(width / 1280.0, height / 720.0), 1.65);
     const auto scaled = [scale](qreal number) { return qRound(number * scale); };
-    m_successPlate->setGeometry(scaled(20), scaled(18), scaled(205), scaled(76));
-    m_failurePlate->setGeometry(scaled(20), scaled(100), scaled(205), scaled(76));
-    m_success->setGeometry(scaled(10), scaled(14), scaled(145), scaled(45));
-    m_failure->setGeometry(scaled(10), scaled(14), scaled(145), scaled(45));
-    m_levelPlate->setGeometry((width - scaled(130)) / 2, 0, scaled(130), scaled(124));
+    const bool showTitleBar = isFullScreen() && m_displayedState == GameState::Paused;
+    const int top = showTitleBar ? qBound(34, scaled(34), 46) : 0;
+    if (m_fullscreenTitleBar) {
+        m_fullscreenTitleBar->setGeometry(0, 0, width, top);
+        m_fullscreenTitleBar->setVisible(showTitleBar);
+    }
+    const QRectF basket = m_view->basketRect();
+    const int scoreWidth = scaled(185);
+    const int scoreHeight = scaled(60);
+    const int scoreX = width - scoreWidth - scaled(10);
+    const int missedY = qRound(basket.top()) - scoreHeight + scaled(5);
+    m_successPlate->setGeometry(scoreX, missedY - scoreHeight - scaled(12), scoreWidth, scoreHeight);
+    m_failurePlate->setGeometry(scoreX, missedY, scoreWidth, scoreHeight);
+    m_success->setGeometry(0, 0, scaled(140), scoreHeight);
+    m_failure->setGeometry(0, 0, scaled(140), scoreHeight);
+    m_levelPlate->setGeometry((width - scaled(130)) / 2, top, scaled(130), scaled(124));
     m_level->setGeometry(scaled(13), scaled(66), scaled(104), scaled(36));
     QFont font(QStringLiteral("Microsoft YaHei"));
     font.setPixelSize(scaled(22));
-    for (auto *label : {m_success, m_failure, m_level})
+    m_level->setFont(font);
+    font.setPixelSize(qMax(12, scaled(17)));
+    for (auto *label : {m_success, m_failure})
         label->setFont(font);
     font.setPixelSize(qMax(11, scaled(15)));
     m_accuracy->setFont(font);
-    m_accuracy->setGeometry(scaled(20), scaled(184), scaled(205), scaled(30));
+    m_accuracy->setGeometry(scaled(20), top + scaled(18), scaled(172), scaled(30));
 
     const int icon = scaled(62);
     const int right = width - scaled(18);
-    m_settings->setGeometry(right - scaled(70), scaled(14), scaled(70), scaled(89));
-    m_stop->setGeometry(right - scaled(145), scaled(20), icon, icon);
-    m_pause->setGeometry(right - scaled(220), scaled(20), icon, icon);
-    const int footerWidth = qMin(width - 24, 470);
-    m_footer->setGeometry((width - footerWidth) / 2, height - 57, footerWidth, 43);
-    m_status->setGeometry((width - qMin(width - 24, 520)) / 2, height - 95, qMin(width - 24, 520), 28);
-    const int overlayWidth = qMin(width - 60, 490);
+    m_settings->setGeometry(right - scaled(70), top + scaled(14), scaled(70), scaled(89));
+    m_stop->setGeometry(right - scaled(145), top + scaled(20), icon, icon);
+    m_pause->setGeometry(right - scaled(220), top + scaled(20), icon, icon);
+    const int footerArea = qRound(basket.left()) - 12;
+    const int footerWidth = qMin(footerArea - 24, 470);
+    m_footer->setGeometry((footerArea - footerWidth) / 2, height - 57, footerWidth, 43);
+    const int statusWidth = qMin(footerArea - 24, 520);
+    m_status->setGeometry((footerArea - statusWidth) / 2, height - 95, statusWidth, 28);
+    const int overlayWidth = qMin(2 * scoreX - width - 24, 490);
     const int overlayHeight = qMin(height - 170, 330);
     m_overlay->setGeometry((width - overlayWidth) / 2, (height - overlayHeight) / 2,
                             overlayWidth, overlayHeight);
@@ -257,63 +312,72 @@ void GameWindow::arrangeOverlays()
     }
     m_overlay->raise();
     m_footer->raise();
+    if (showTitleBar && m_fullscreenTitleBar)
+        m_fullscreenTitleBar->raise();
 }
 
 void GameWindow::display(const FallingGameModel &model)
 {
     m_view->display(model);
+    const bool stateChanged = m_displayedState != model.state();
     m_displayedState = model.state();
     m_passed = model.awaitingNextLevel() || model.completed();
     const auto &stats = model.stats();
-    m_success->setText(QStringLiteral("成功  %1").arg(stats.success));
-    m_failure->setText(QStringLiteral("失败  %1").arg(stats.failures()));
-    m_failurePlate->setToolTip(QStringLiteral("漏接 %1 · 误击 %2").arg(stats.missed).arg(stats.wrong));
+    m_success->setText(QStringLiteral("救下 %1/%2").arg(model.stageSuccess()).arg(model.settings().target));
+    m_successPlate->setToolTip(QStringLiteral("本局累计救下 %1 个苹果").arg(stats.success));
+    m_failure->setText(QStringLiteral("漏接 %1/%2").arg(stats.missed).arg(model.settings().missLimit));
+    m_failurePlate->setToolTip(QStringLiteral("落到场景高度的 70% 时计为漏接。误击 %1 次").arg(stats.wrong));
     m_level->setText(QStringLiteral("第 %1 关").arg(model.settings().level));
     m_accuracy->setText(QStringLiteral("准确率  %1%").arg(stats.accuracy(), 0, 'f', 1));
-    m_status->setText(QStringLiteral("本关 %1 / %2  ·  输入苹果字母  ·  空格暂停")
-                         .arg(model.stageSuccess()).arg(model.settings().target));
+    const bool paused = model.state() == GameState::Paused && !model.awaitingNextLevel();
+    m_status->setText(paused ? QStringLiteral("游戏暂停 · 空格继续")
+                             : QStringLiteral("输入苹果上的字母 · 空格暂停"));
     const QSignalBlocker blocker(m_sound);
     m_sound->setChecked(model.settings().soundEnabled);
     const bool playing = model.state() == GameState::Playing;
     m_pause->setEnabled(playing || (model.state() == GameState::Paused && !model.awaitingNextLevel()));
+    m_pause->setFallbackText(paused ? QStringLiteral("继续") : QStringLiteral("暂停"));
     m_pause->setAsset(model.state() == GameState::Paused ? QStringLiteral("apple_resume") : QStringLiteral("apple_pause"));
     m_stop->setEnabled(playing || model.state() == GameState::Paused);
-    m_overlay->setVisible(!playing);
-    if (!playing) {
+    const bool showOverlay = !playing && !paused;
+    m_overlay->setVisible(showOverlay);
+    if (showOverlay) {
         if (model.state() == GameState::Idle) {
             m_overlayTitle->setText(QStringLiteral("拯救苹果 2026"));
-            m_overlayText->setText(QStringLiteral("看清字母，按下对应按键。\n在苹果越过警戒线前救下它！"));
+            m_overlayText->setText(QStringLiteral("看清字母，按下对应按键。\n在苹果落下前救下它！"));
             m_primary->setAsset(QStringLiteral("apple_start"));
         } else if (model.awaitingNextLevel()) {
             m_overlayTitle->setText(QStringLiteral("第 %1 关通过！").arg(model.settings().level));
             m_overlayText->setText(QStringLiteral("本关已救下 %1 个苹果。\n准备好迎接更快的下一关了吗？").arg(model.stageSuccess()));
             m_primary->setAsset(QStringLiteral("apple_common_panel_button_primary"), QStringLiteral("进入下一关"));
-        } else if (model.state() == GameState::Paused) {
-            m_overlayTitle->setText(QStringLiteral("游戏已暂停"));
-            m_overlayText->setText(QStringLiteral("苹果已经停住，放松一下。\n点击继续或按空格返回游戏。"));
-            m_primary->setAsset(QStringLiteral("apple_common_panel_button_primary"), QStringLiteral("继续游戏"));
         } else {
-            m_overlayTitle->setText(model.completed() ? QStringLiteral("十关挑战完成！") : QStringLiteral("本局结束"));
+            QString title = QStringLiteral("本局结束");
+            if (model.completed())
+                title = QStringLiteral("十关挑战完成！");
+            else if (stats.missed >= model.settings().missLimit)
+                title = QStringLiteral("已达到漏接上限");
+            m_overlayTitle->setText(title);
             m_overlayText->setText(QStringLiteral("成功 %1  ·  漏接 %2  ·  误击 %3\n准确率 %4%")
                                       .arg(stats.success).arg(stats.missed).arg(stats.wrong)
                                       .arg(stats.accuracy(), 0, 'f', 1));
             m_primary->setAsset(QStringLiteral("apple_common_panel_button_primary"), QStringLiteral("再来一局"));
         }
-        arrangeOverlays();
     }
+    if (showOverlay || stateChanged)
+        arrangeOverlays();
 }
 
 QVector<QPair<qreal, qreal>> GameWindow::spawnRanges(qreal tokenDiameter) const
 {
-    // 只向 Model 传递数值范围，避开顶部计分板、关卡牌和控制按钮。
+    // 只向 Model 传递数值范围，避免苹果被计分板、关卡牌或按钮遮住。
     // 苹果仍从屏幕上方进入，字母不会被这些 UI 控件挡住。
     const qreal width = m_view->viewport()->width();
     const qreal margin = tokenDiameter / 2.0 + 7.0;
     QVector<QPair<qreal, qreal>> ranges;
-    const qreal left = (m_successPlate->geometry().right() + margin) / width;
+    const qreal left = (m_accuracy->geometry().right() + margin) / width;
     const qreal middleLeft = (m_levelPlate->geometry().left() - margin) / width;
     const qreal middleRight = (m_levelPlate->geometry().right() + margin) / width;
-    const qreal right = (m_pause->geometry().left() - margin) / width;
+    const qreal right = (qMin(m_pause->geometry().left(), m_successPlate->geometry().left()) - margin) / width;
     if (left < middleLeft)
         ranges.append(qMakePair(left, middleLeft));
     if (middleRight < right)
@@ -323,59 +387,160 @@ QVector<QPair<qreal, qreal>> GameWindow::spawnRanges(qreal tokenDiameter) const
 
 bool GameWindow::editSettings(const GameSettings &current, GameSettings *result)
 {
-    QDialog dialog(this);
-    dialog.setWindowTitle(QStringLiteral("拯救苹果 · 设置"));
-    dialog.setMinimumWidth(370);
+    const QSize viewportSize = m_view->viewport()->size();
+    const qreal scale = qBound(1.0, qMin(viewportSize.width() / 1024.0,
+                                        viewportSize.height() / 680.0), 2.6);
+    const auto px = [scale](int value) { return qRound(value * scale); };
+    const auto panelRect = [px](int x, int y, int width, int height) {
+        return QRect(px(x), px(y), px(width), px(height));
+    };
+
+    QDialog dialog(this, Qt::Dialog | Qt::FramelessWindowHint);
+    dialog.setWindowTitle(QStringLiteral("游戏设置"));
+    dialog.setAttribute(Qt::WA_TranslucentBackground);
+    dialog.setFixedSize(px(468), px(360));
+    QFont settingsFont(QStringLiteral("Microsoft YaHei"));
+    settingsFont.setPixelSize(px(15));
+    dialog.setFont(settingsFont);
     dialog.setStyleSheet(QStringLiteral(
-        "QDialog {background:#fff3d6; color:#674321;}"
-        "QLabel,QCheckBox {color:#674321;}"
-        "QSlider::groove:horizontal {height:8px; background:#dcb77b; border-radius:4px;}"
-        "QSlider::handle:horizontal {background:#a6622d; width:20px; margin:-6px 0; border-radius:10px;}"
-        "QSpinBox {padding:5px; background:#fffaf0; border:1px solid #d6b882; border-radius:5px;}"
-        "QPushButton {padding:7px 18px;}"));
-    auto *layout = new QVBoxLayout(&dialog);
+        "QLabel,QCheckBox,QPushButton {color:#674321; font-size:%7px;}"
+        "QCheckBox::indicator {width:%1px; height:%1px;}"
+        "QSlider::groove:horizontal {height:%2px; background:#fff7ea; border-radius:%3px;}"
+        "QSlider::sub-page:horizontal {background:#a85e36; border-radius:%3px;}"
+        "QSlider::handle:horizontal {background:#d89d71; border:%4px solid #a85e36;"
+        "width:%5px; margin:-%3px 0; border-radius:%6px;}"
+        "QPushButton#restoreDefaults {color:#77411e; border:none; background:transparent;}"
+        "QPushButton#restoreDefaults:hover {text-decoration:underline;}")
+        .arg(px(14)).arg(px(7)).arg(px(3)).arg(px(1)).arg(px(12)).arg(px(6)).arg(px(15)));
+
+    auto *board = new ImagePanel(m_skins, QStringLiteral("apple_common_panel_base"), &dialog);
+    board->setGeometry(panelRect(4, 21, 421, 333));
     auto *title = new QLabel(&dialog);
+    title->setGeometry(panelRect(69, 0, 291, 68));
+    title->setAlignment(Qt::AlignCenter);
     const QPixmap titleImage = m_skins->frame(QStringLiteral("apple_settings_panel_title"));
     if (!titleImage.isNull())
-        title->setPixmap(titleImage.scaled(290, 65, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    else
+        title->setPixmap(titleImage.scaled(title->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    else {
         title->setText(QStringLiteral("游戏设置"));
-    title->setAlignment(Qt::AlignCenter);
-    layout->addWidget(title);
-    auto *form = new QFormLayout;
-    auto *levelRow = new QWidget(&dialog);
-    auto *levelLayout = new QHBoxLayout(levelRow);
-    levelLayout->setContentsMargins(0, 0, 0, 0);
-    auto *level = new QSlider(Qt::Horizontal, levelRow);
-    level->setRange(1, 10);
-    level->setValue(current.level);
-    auto *levelText = new QLabel(QString::number(current.level), levelRow);
-    connect(level, &QSlider::valueChanged, levelText, [levelText](int value) { levelText->setText(QString::number(value)); });
-    levelLayout->addWidget(level);
-    levelLayout->addWidget(levelText);
-    auto *count = new QSpinBox(&dialog);
-    count->setRange(1, 5);
-    count->setValue(current.maxApples);
-    auto *target = new QSpinBox(&dialog);
-    target->setRange(1, 999);
-    target->setValue(current.target);
-    auto *sound = new QCheckBox(QStringLiteral("开启音乐和击中音效"), &dialog);
+        title->setStyleSheet(QStringLiteral("font-size:%1px; font-weight:bold;").arg(px(26)));
+    }
+    auto *close = new SpriteButton(m_skins, QStringLiteral("apple_common_panel_close"), QStringLiteral("×"), &dialog);
+    close->setGeometry(panelRect(378, 23, 29, 29));
+    connect(close, &QAbstractButton::clicked, &dialog, &QDialog::reject);
+
+    auto *content = new ImagePanel(m_skins, QStringLiteral("apple_common_panel_content_bg"), &dialog);
+    content->setGeometry(panelRect(53, 77, 322, 207));
+    auto *contentLayout = new QVBoxLayout(content);
+    contentLayout->setContentsMargins(px(24), px(13), px(24), px(16));
+    contentLayout->setSpacing(px(6));
+    auto *restore = new QPushButton(QStringLiteral("恢复默认"), content);
+    restore->setObjectName(QStringLiteral("restoreDefaults"));
+    contentLayout->addWidget(restore, 0, Qt::AlignRight);
+
+    auto *pages = new QStackedWidget(content);
+    pages->setObjectName(QStringLiteral("settingsPages"));
+    auto *gameplay = new QWidget(pages);
+    auto *audio = new QWidget(pages);
+    auto *gameForm = new QFormLayout(gameplay);
+    auto *audioForm = new QFormLayout(audio);
+    for (auto *form : {gameForm, audioForm}) {
+        form->setContentsMargins(0, 0, 0, 0);
+        form->setVerticalSpacing(px(8));
+        form->setHorizontalSpacing(px(10));
+        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    }
+
+    const auto addSlider = [px](QFormLayout *form, const QString &label, const char *name,
+                                int minimum, int maximum, int value) {
+        auto *row = new QWidget;
+        auto *layout = new QHBoxLayout(row);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(px(6));
+        auto *slider = new QSlider(Qt::Horizontal, row);
+        slider->setMinimumHeight(px(20));
+        slider->setObjectName(QString::fromLatin1(name));
+        slider->setRange(minimum, maximum);
+        slider->setValue(value);
+        auto *number = new QLabel(QString::number(value), row);
+        number->setFixedWidth(px(29));
+        number->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        connect(slider, &QSlider::valueChanged, number, [number](int changed) {
+            number->setText(QString::number(changed));
+        });
+        layout->addWidget(slider);
+        layout->addWidget(number);
+        form->addRow(label, row);
+        return slider;
+    };
+    auto *level = addSlider(gameForm, QStringLiteral("游戏难度"), "difficulty", 1, 10, current.level);
+    auto *target = addSlider(gameForm, QStringLiteral("过关目标"), "stageTarget", 1, 999, current.target);
+    auto *limit = addSlider(gameForm, QStringLiteral("漏接上限"), "missLimit", 1, 50, current.missLimit);
+    auto *count = addSlider(gameForm, QStringLiteral("同屏苹果"), "appleCount", 1, 5, current.maxApples);
+
+    auto *toggles = new QWidget(audio);
+    auto *toggleLayout = new QHBoxLayout(toggles);
+    toggleLayout->setContentsMargins(0, 0, 0, 0);
+    toggleLayout->setSpacing(px(6));
+    auto *sound = new QCheckBox(QStringLiteral("击中音效"), toggles);
+    auto *music = new QCheckBox(QStringLiteral("背景音乐"), toggles);
+    sound->setObjectName(QStringLiteral("hitAudio"));
+    music->setObjectName(QStringLiteral("backgroundAudio"));
     sound->setChecked(current.soundEnabled);
-    form->addRow(QStringLiteral("等级 / 下落速度"), levelRow);
-    form->addRow(QStringLiteral("同屏最多苹果"), count);
-    form->addRow(QStringLiteral("每关目标数量"), target);
-    form->addRow(sound);
-    layout->addLayout(form);
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("应用"));
-    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    layout->addWidget(buttons);
+    music->setChecked(current.musicEnabled);
+    toggleLayout->addWidget(sound);
+    toggleLayout->addWidget(music);
+    audioForm->addRow(toggles);
+    auto *soundVolume = addSlider(audioForm, QStringLiteral("音效音量"), "soundVolume", 0, 100, current.soundVolume);
+    auto *musicVolume = addSlider(audioForm, QStringLiteral("音乐音量"), "musicVolume", 0, 100, current.musicVolume);
+
+    pages->addWidget(gameplay);
+    pages->addWidget(audio);
+    contentLayout->addWidget(pages, 1);
+    auto *gameTab = new SpriteButton(m_skins, QStringLiteral("apple_tab_gameplay"), QStringLiteral("玩法"), &dialog);
+    auto *audioTab = new SpriteButton(m_skins, QStringLiteral("apple_tab_audio"), QStringLiteral("音频"), &dialog);
+    audioTab->setObjectName(QStringLiteral("audioTab"));
+    gameTab->setGeometry(panelRect(375, 109, 78, 30));
+    audioTab->setGeometry(panelRect(375, 151, 78, 30));
+    connect(gameTab, &QAbstractButton::clicked, pages, [pages]() { pages->setCurrentIndex(0); });
+    connect(audioTab, &QAbstractButton::clicked, pages, [pages]() { pages->setCurrentIndex(1); });
+    connect(restore, &QPushButton::clicked, &dialog, [=]() {
+        const GameSettings defaults;
+        if (pages->currentIndex() == 0) {
+            level->setValue(defaults.level);
+            count->setValue(defaults.maxApples);
+            target->setValue(defaults.target);
+            limit->setValue(defaults.missLimit);
+        } else {
+            sound->setChecked(defaults.soundEnabled);
+            music->setChecked(defaults.musicEnabled);
+            soundVolume->setValue(defaults.soundVolume);
+            musicVolume->setValue(defaults.musicVolume);
+        }
+    });
+
+    auto *cancel = new SpriteButton(m_skins, QStringLiteral("apple_common_panel_button_secondary"), QStringLiteral("取消"), &dialog);
+    cancel->setAsset(QStringLiteral("apple_common_panel_button_secondary"), QStringLiteral("取消"));
+    cancel->setGeometry(panelRect(97, 290, 105, 34));
+    auto *confirm = new SpriteButton(m_skins, QStringLiteral("apple_common_panel_button_primary"), QStringLiteral("确认"), &dialog);
+    confirm->setObjectName(QStringLiteral("confirmSettings"));
+    confirm->setAsset(QStringLiteral("apple_common_panel_button_primary"), QStringLiteral("确认"));
+    confirm->setGeometry(panelRect(225, 290, 105, 34));
+    connect(cancel, &QAbstractButton::clicked, &dialog, &QDialog::reject);
+    connect(confirm, &QAbstractButton::clicked, &dialog, &QDialog::accept);
+
     if (dialog.exec() != QDialog::Accepted)
         return false;
-    *result = {level->value(), count->value(), target->value(), sound->isChecked()};
+    *result = {level->value(), count->value(), target->value(), sound->isChecked(),
+               limit->value(), music->isChecked(), soundVolume->value(), musicVolume->value()};
     return true;
+}
+
+void GameWindow::changeEvent(QEvent *event)
+{
+    QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::WindowStateChange && m_fullscreenTitleBar)
+        arrangeOverlays();
 }
 
 void GameWindow::resizeEvent(QResizeEvent *event)

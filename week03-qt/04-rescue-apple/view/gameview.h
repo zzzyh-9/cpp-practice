@@ -15,6 +15,7 @@ class GameView : public QGraphicsView {
 public:
     explicit GameView(SkinManager *skins, QWidget *parent = nullptr);
     void display(const FallingGameModel &model);
+    QRectF basketRect() const;
 
 signals:
     void textTyped(const QString &text);
@@ -32,6 +33,7 @@ private:
     SkinManager *m_skins;
     QGraphicsScene *m_scene;
     QHash<quint64, FallingItem *> m_items;
+    bool m_hasRescuedApple = false;
 };
 
 } // namespace RescueApple

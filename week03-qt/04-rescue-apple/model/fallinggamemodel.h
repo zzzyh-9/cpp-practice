@@ -15,6 +15,10 @@ struct GameSettings {
     int maxApples = 3;
     int target = 20;
     bool soundEnabled = true;
+    int missLimit = 50;
+    bool musicEnabled = true;
+    int soundVolume = 50;
+    int musicVolume = 50;
 };
 
 struct GameStats {

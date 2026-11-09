@@ -20,6 +20,10 @@ GameController::GameController(FallingGameModel *model, GameWindow *window, Skin
         settings.maxApples = saved.value(QStringLiteral("maxApples"), 3).toInt();
         settings.target = saved.value(QStringLiteral("target"), 20).toInt();
         settings.soundEnabled = saved.value(QStringLiteral("sound"), true).toBool();
+        settings.missLimit = saved.value(QStringLiteral("missLimit"), settings.missLimit).toInt();
+        settings.musicEnabled = saved.value(QStringLiteral("music"), settings.soundEnabled).toBool();
+        settings.soundVolume = saved.value(QStringLiteral("soundVolume"), settings.soundVolume).toInt();
+        settings.musicVolume = saved.value(QStringLiteral("musicVolume"), settings.musicVolume).toInt();
         m_model->applySettings(settings);
     }
     m_gameTimer.setInterval(16);
@@ -65,7 +69,7 @@ void GameController::refresh()
         m_gameTimer.stop();
     }
     m_window->display(*m_model);
-    m_sound.synchronize(m_model->state(), m_model->settings().soundEnabled, m_skins->skin());
+    m_sound.synchronize(m_model->state(), m_model->settings(), m_skins->skin());
 }
 
 void GameController::primaryAction()
@@ -139,6 +143,10 @@ void GameController::saveSettings()
     saved.setValue(QStringLiteral("maxApples"), settings.maxApples);
     saved.setValue(QStringLiteral("target"), settings.target);
     saved.setValue(QStringLiteral("sound"), settings.soundEnabled);
+    saved.setValue(QStringLiteral("missLimit"), settings.missLimit);
+    saved.setValue(QStringLiteral("music"), settings.musicEnabled);
+    saved.setValue(QStringLiteral("soundVolume"), settings.soundVolume);
+    saved.setValue(QStringLiteral("musicVolume"), settings.musicVolume);
 }
 
 } // namespace RescueApple

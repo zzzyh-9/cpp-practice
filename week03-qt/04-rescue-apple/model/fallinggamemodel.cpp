@@ -45,6 +45,9 @@ void FallingGameModel::applySettings(GameSettings settings)
     settings.level = qBound(1, settings.level, 10);
     settings.maxApples = qBound(1, settings.maxApples, qMin(5, m_alphabet.size()));
     settings.target = qBound(1, settings.target, 999);
+    settings.missLimit = qBound(1, settings.missLimit, 50);
+    settings.soundVolume = qBound(0, settings.soundVolume, 100);
+    settings.musicVolume = qBound(0, settings.musicVolume, 100);
     const bool levelChanged = settings.level != m_settings.level;
     m_settings = settings;
     if (levelChanged) {
@@ -54,9 +57,14 @@ void FallingGameModel::applySettings(GameSettings settings)
     }
     while (m_tokens.size() > m_settings.maxApples)
         m_tokens.removeLast(); // 减少上限时移除多余苹果，不计漏接。
-    if ((m_state == GameState::Playing || m_state == GameState::Paused) &&
-        !m_awaitingNextLevel && m_stageSuccess >= m_settings.target)
-        finishLevel();
+    if (m_state == GameState::Playing || m_state == GameState::Paused) {
+        if (m_stats.missed >= m_settings.missLimit) {
+            stop();
+            return;
+        }
+        if (!m_awaitingNextLevel && m_stageSuccess >= m_settings.target)
+            finishLevel();
+    }
     emit changed();
 }
 
@@ -194,6 +202,10 @@ void FallingGameModel::advance(double seconds)
             m_tokens.removeAt(i);
             ++m_stats.missed;
             emit feedback(false);
+            if (m_stats.missed >= m_settings.missLimit) {
+                stop();
+                return;
+            }
         }
     }
     m_spawnElapsed += seconds;

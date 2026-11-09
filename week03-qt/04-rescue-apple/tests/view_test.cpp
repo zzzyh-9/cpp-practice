@@ -1,12 +1,18 @@
 #include <QtTest>
 
 #include <QAbstractButton>
+#include <QCheckBox>
+#include <QDialog>
 #include <QDir>
 #include <QFile>
 #include <QFontDatabase>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
+#include <QSlider>
+#include <QStackedWidget>
 #include <QTemporaryDir>
+#include <QTimer>
 
 #include "controller/gamecontroller.h"
 
@@ -77,19 +83,151 @@ private slots:
         QCoreApplication::processEvents();
         auto *primary = window.findChild<QAbstractButton *>(QStringLiteral("primaryAction"));
         QVERIFY(primary);
+        auto *rescued = window.findChild<QLabel *>(QStringLiteral("rescuedCount"));
+        auto *missed = window.findChild<QLabel *>(QStringLiteral("missedCount"));
+        QVERIFY(rescued);
+        QVERIFY(missed);
         QTest::mouseClick(primary, Qt::LeftButton);
         QCOMPARE(model.state(), GameState::Playing);
+        QCOMPARE(rescued->text(), QStringLiteral("救下 0/20"));
+        QCOMPARE(missed->text(), QStringLiteral("漏接 0/50"));
         for (int step = 0; step < 100 && model.tokens().first().y < 0; ++step)
             model.advance(0.05);
         const QChar letter = model.tokens().first().symbol;
         QTest::keyClick(window.gameView(), static_cast<Qt::Key>(letter.unicode()));
         QCOMPARE(model.stats().success, 1);
+        QCOMPARE(rescued->text(), QStringLiteral("救下 1/20"));
+        QTest::keyClick(window.gameView(), static_cast<Qt::Key>(letter.unicode()));
+        QCOMPARE(model.stats().wrong, 1);
+        QCOMPARE(missed->text(), QStringLiteral("漏接 0/50"));
+        model.advance(1.0); // 生成下一颗苹果。
+        model.advance(20.0); // 让它越过漏接高度。
+        QCOMPARE(missed->text(), QStringLiteral("漏接 1/50"));
         QTest::keyClick(window.gameView(), Qt::Key_Space);
         QCOMPARE(model.state(), GameState::Paused);
         QTest::qWait(35);
         QTest::keyClick(window.gameView(), Qt::Key_Space);
         QCOMPARE(model.state(), GameState::Playing);
-        model.stop();
+        auto settings = model.settings();
+        settings.missLimit = 2;
+        model.applySettings(settings);
+        QCOMPARE(missed->text(), QStringLiteral("漏接 1/2"));
+        model.advance(20.0);
+        QCOMPARE(model.state(), GameState::End);
+        QCOMPARE(missed->text(), QStringLiteral("漏接 2/2"));
+    }
+
+    void fullscreenTitleBarWhilePaused()
+    {
+        SkinManager skins;
+        FallingGameModel model(nullptr, 17);
+        GameSettings settings;
+        settings.soundEnabled = false;
+        settings.musicEnabled = false;
+        model.applySettings(settings);
+        GameWindow window(&skins);
+        GameController controller(&model, &window, &skins, false);
+        window.showFullScreen();
+        QCoreApplication::processEvents();
+
+        auto *titleBar = window.findChild<QWidget *>(QStringLiteral("fullscreenTitleBar"));
+        QVERIFY(titleBar);
+        QVERIFY(titleBar->isHidden());
+        model.start();
+        QVERIFY(titleBar->isHidden());
+        model.pause();
+        QVERIFY(titleBar->isVisible());
+        QCOMPARE(titleBar->width(), window.gameView()->viewport()->width());
+        model.resume();
+        QVERIFY(titleBar->isHidden());
+        model.pause();
+
+        auto *restore = titleBar->findChild<QAbstractButton *>(QStringLiteral("fullscreenRestore"));
+        QVERIFY(restore);
+        QTest::mouseClick(restore, Qt::LeftButton);
+        QVERIFY(!window.isFullScreen());
+        QVERIFY(titleBar->isHidden());
+        QCOMPARE(model.state(), GameState::Paused);
+
+        window.showFullScreen();
+        QCoreApplication::processEvents();
+        auto *close = titleBar->findChild<QAbstractButton *>(QStringLiteral("fullscreenClose"));
+        QVERIFY(close && close->isVisible());
+        const bool quitOnClose = QApplication::quitOnLastWindowClosed();
+        QApplication::setQuitOnLastWindowClosed(false);
+        QTest::mouseClick(close, Qt::LeftButton);
+        QApplication::setQuitOnLastWindowClosed(quitOnClose);
+        QVERIFY(!window.isVisible());
+    }
+
+    void settingsTabsAndApply_data()
+    {
+        QTest::addColumn<QSize>("windowSize");
+        QTest::addColumn<int>("minimumDialogWidth");
+        QTest::addColumn<int>("minimumFontSize");
+        QTest::newRow("small window") << QSize(800, 600) << 468 << 15;
+        QTest::newRow("full-size window") << QSize(2560, 1500) << 1000 << 30;
+    }
+
+    void settingsTabsAndApply()
+    {
+        QFETCH(QSize, windowSize);
+        QFETCH(int, minimumDialogWidth);
+        QFETCH(int, minimumFontSize);
+        SkinManager skins;
+        GameWindow window(&skins);
+        window.resize(windowSize);
+        window.show();
+        QCoreApplication::processEvents();
+        GameSettings result;
+        QString error;
+        QTimer::singleShot(0, &window, [&]() {
+            auto *dialog = window.findChild<QDialog *>();
+            if (!dialog)
+                qFatal("Settings dialog did not open");
+            auto *tabs = dialog->findChild<QStackedWidget *>(QStringLiteral("settingsPages"));
+            auto *audioTab = dialog->findChild<QAbstractButton *>(QStringLiteral("audioTab"));
+            auto *confirm = dialog->findChild<QAbstractButton *>(QStringLiteral("confirmSettings"));
+            auto *limit = dialog->findChild<QSlider *>(QStringLiteral("missLimit"));
+            auto *volume = dialog->findChild<QSlider *>(QStringLiteral("musicVolume"));
+            auto *hit = dialog->findChild<QCheckBox *>(QStringLiteral("hitAudio"));
+            if (!tabs || !audioTab || !confirm || !limit || !volume || !hit) {
+                error = QStringLiteral("A settings control is missing");
+                dialog->reject();
+                return;
+            }
+            const auto *limitText = limit->parentWidget()->findChild<QLabel *>();
+            const int fontSize = limitText ? limitText->font().pixelSize() : -1;
+            if (dialog->width() < minimumDialogWidth || dialog->width() >= window.width() ||
+                dialog->height() >= window.height() || fontSize < minimumFontSize) {
+                error = QStringLiteral("Settings %1x%2 with %3 px text in window %4x%5")
+                            .arg(dialog->width()).arg(dialog->height()).arg(fontSize)
+                            .arg(window.width()).arg(window.height());
+                dialog->reject();
+                return;
+            }
+            const QString directory = QCoreApplication::applicationDirPath() + QStringLiteral("/screenshots");
+            const QString suffix = QStringLiteral("-%1.png").arg(windowSize.width());
+            QDir().mkpath(directory);
+            dialog->grab().save(directory + QStringLiteral("/settings-gameplay") + suffix);
+            limit->setValue(12);
+            QTest::mouseClick(audioTab, Qt::LeftButton);
+            if (tabs->currentIndex() != 1) {
+                error = QStringLiteral("Audio tab did not open");
+                dialog->reject();
+                return;
+            }
+            dialog->grab().save(directory + QStringLiteral("/settings-audio") + suffix);
+            volume->setValue(25);
+            hit->setChecked(false);
+            QTest::mouseClick(confirm, Qt::LeftButton);
+        });
+        const bool accepted = window.editSettings(GameSettings{}, &result);
+        QVERIFY2(accepted, qPrintable(error));
+        QCOMPARE(result.missLimit, 12);
+        QCOMPARE(result.musicVolume, 25);
+        QVERIFY(result.musicEnabled);
+        QVERIFY(!result.soundEnabled);
     }
 
     void responsiveRendering_data()
@@ -116,6 +254,17 @@ private slots:
         auto *footer = window.findChild<QWidget *>(QStringLiteral("footer"));
         QVERIFY(footer);
         QVERIFY(window.gameView()->viewport()->rect().contains(footer->geometry()));
+        const QRectF basket = window.gameView()->basketRect();
+        QVERIFY(window.gameView()->sceneRect().contains(basket));
+        QVERIFY(basket.left() > size.width() / 2.0);
+        const auto *rescued = window.findChild<QLabel *>(QStringLiteral("rescuedCount"));
+        const auto *missed = window.findChild<QLabel *>(QStringLiteral("missedCount"));
+        QVERIFY(rescued && missed);
+        const QRect rescuedPlate = rescued->parentWidget()->geometry();
+        const QRect missedPlate = missed->parentWidget()->geometry();
+        QVERIFY(rescuedPlate.left() > size.width() / 2);
+        QVERIFY(rescuedPlate.bottom() < missedPlate.top());
+        QVERIFY(missedPlate.bottom() < basket.center().y());
 
         const QString directory = QCoreApplication::applicationDirPath() + QStringLiteral("/screenshots");
         QVERIFY(QDir().mkpath(directory));

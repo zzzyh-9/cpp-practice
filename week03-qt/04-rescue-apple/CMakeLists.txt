@@ -1,3 +1,15 @@
+cmake_minimum_required(VERSION 3.16)
+
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+    project(RescueApple LANGUAGES CXX)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_CXX_EXTENSIONS OFF)
+    include(CTest)
+    find_package(Qt5 5.15 REQUIRED COMPONENTS Widgets)
+    set(QT_VERSION_MAJOR 5)
+endif()
+
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 

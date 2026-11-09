@@ -12,13 +12,13 @@ static QUrl soundUrl(const QString &path)
 SoundPlayer::SoundPlayer(QObject *parent) : QObject(parent), m_music(this), m_hit(this)
 {
     m_music.setLoopCount(QSoundEffect::Infinite);
-    m_music.setVolume(0.35);
-    m_hit.setVolume(0.8);
 }
 
-void SoundPlayer::synchronize(GameState state, bool enabled, const GameSkin &skin)
+void SoundPlayer::synchronize(GameState state, const GameSettings &settings, const GameSkin &skin)
 {
-    m_enabled = enabled;
+    m_enabled = settings.soundEnabled;
+    m_music.setVolume(settings.musicVolume / 100.0);
+    m_hit.setVolume(settings.soundVolume / 100.0);
     if (skin.backgroundSoundPath != m_musicPath) {
         m_music.stop();
         m_musicPath = skin.backgroundSoundPath;
@@ -29,13 +29,13 @@ void SoundPlayer::synchronize(GameState state, bool enabled, const GameSkin &ski
         m_hitPath = skin.hitSoundPath;
         m_hit.setSource(m_hitPath.isEmpty() ? QUrl() : soundUrl(m_hitPath));
     }
-    if (enabled && state == GameState::Playing && !m_musicPath.isEmpty()) {
+    if (settings.musicEnabled && state == GameState::Playing && !m_musicPath.isEmpty()) {
         if (!m_music.isPlaying())
             m_music.play();
     } else {
         m_music.stop();
     }
-    if (!enabled)
+    if (!m_enabled)
         m_hit.stop();
 }
 
