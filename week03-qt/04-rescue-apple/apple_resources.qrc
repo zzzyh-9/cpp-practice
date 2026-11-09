@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/builtin-audio">
+    <file alias="hit.wav">assets/hit.wav</file>
+    <file alias="music.wav">assets/music.wav</file>
+  </qresource>
+</RCC>
